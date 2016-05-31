@@ -4,8 +4,11 @@
 #include <iostream>
 #include <algorithm>
 #include <strstream>
+#include <fstream>
 #include <map>
 #include <chrono>
+#include <string>
+#include <sstream>
 
 using namespace std;
 
@@ -14,10 +17,18 @@ using namespace std;
 
 // External functions
 extern DWORD WINAPI EchoHandler(void* sd_) ;
-extern void DoSomething( char *src, char *dest );
-void parseCandidates();
+string itos(int i);
+void onServerBoot();
 
-const chrono::minutes duration(1);
+// Variables
+SOCKET sd;
+const chrono::minutes DURATION(1);
+chrono::time_point<chrono::system_clock> endTime;
+const char* logFile = "journal.txt";
+const char* candaidatesList = "Liste_des_candidats.txt";
+map<int, string> candidates;
+map<int, int> votes;
+string strCandidates = "";
 
 
 // List of Winsock error constants mapped to an interpretation string.
@@ -162,7 +173,7 @@ int main(void)
     
 	//Recuperation de l'adresse locale
 	hostent *thisHost;
-	thisHost=gethostbyname("132.207.29.113");
+	thisHost=gethostbyname("132.207.29.108");
 	char* ip;
 	ip=inet_ntoa(*(struct in_addr*) *thisHost->h_addr_list);
 	printf("Adresse locale trouvee %s : \n\n",ip);
@@ -193,13 +204,15 @@ int main(void)
 
 	printf("En attente des connections des clients sur le port %d...\n\n",ntohs(service.sin_port));
 
+	onServerBoot();
+
     while (true) {	
 
 		sockaddr_in sinRemote;
-		 int nAddrSize = sizeof(sinRemote);
+		int nAddrSize = sizeof(sinRemote);
 		// Create a SOCKET for accepting incoming requests.
 		// Accept the connection.
-		 SOCKET sd = accept(ServerSocket, (sockaddr*)&sinRemote, &nAddrSize);
+		SOCKET sd = accept(ServerSocket, (sockaddr*)&sinRemote, &nAddrSize);
         if (sd != INVALID_SOCKET) {
 			cout << "Connection acceptee De : " <<
                     inet_ntoa(sinRemote.sin_addr) << ":" <<
@@ -232,29 +245,81 @@ int main(void)
 DWORD WINAPI EchoHandler(void* sd_) 
 {
 	SOCKET sd = (SOCKET)sd_;
-
-	// Read Data from client
-	char readBuffer[10], outBuffer[10];
-	int readBytes;
-
-	readBytes = recv(sd, readBuffer, 7, 0);
-	if (readBytes > 0) {
-        cout << "Received " << readBytes << " bytes from client." << endl;
-		cout << "Received " << readBuffer << " from client." << endl;
-		DoSomething(readBuffer, outBuffer);
-		send(sd, outBuffer, 7, 0);
-	}
-	else if (readBytes == SOCKET_ERROR) {
-		cout << WSAGetLastErrorMessage("Echec de la reception !") << endl;
-	}
+	send(sd, strCandidates.c_str(), strCandidates.size(), 0);
 	closesocket(sd);
 
 	return 0;
 }
-// Do Something with the information
-void DoSomething( char *src, char *dest )
-{
-	for (int i = 0; i < 7; ++i ) {
-		dest[i] = toupper(src[i]);
+
+void onServerBoot() {
+	// Read the candidates file
+	ifstream candidatesFile(candaidatesList);
+
+	// Insert the data in map candidates
+	while (!candidatesFile.eof() && !candidatesFile.fail())
+	{
+		string candidate;
+		getline(candidatesFile, candidate, ';');
+		candidate.erase(std::remove(candidate.begin(), candidate.end(), '\n'), candidate.end());
+		auto nb = candidates.size();
+		if (candidate != "") {
+			candidates.emplace(nb, candidate);
+			votes.emplace(nb, 0);
+			strCandidates += itos(nb) + " : " + candidates.at(nb) + "\n";
+		}
 	}
 }
+
+void onPollClosed() {
+	// If no connections, onPollOver
+	// If connections, wait
+}
+
+void onPollOver() {
+	
+}
+
+void onServerShutdown() {
+
+}
+
+bool onConnectionRequest() {
+	// Initialize countdown if not initialized
+	if (endTime.time_since_epoch().count() == 0) {
+		endTime = chrono::system_clock::now() + DURATION;
+	}
+	// Accept connection if poll is open
+	if (chrono::system_clock::now().time_since_epoch().count() < endTime.time_since_epoch().count()) {
+		return true;
+	}
+	return false;
+}
+
+void onConnectionAccepted() {
+
+}
+
+void onConnectionRefused() {
+	// Send error message
+}
+
+void onVote() {
+	// Get elector info
+	// Add vote to votes map
+	// Add info to log
+	// Disconnect elector
+}
+
+void onDisconnect() {
+	// Send message
+}
+
+string itos(int i) {
+	stringstream ss;
+	ss << i;
+	string s;
+	ss >> s;
+	return s;
+}
+
+// onConnectionRequest() ? onConnectionAccepted() : onConnectionRefused();
