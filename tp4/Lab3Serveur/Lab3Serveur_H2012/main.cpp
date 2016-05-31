@@ -4,6 +4,8 @@
 #include <iostream>
 #include <algorithm>
 #include <strstream>
+#include <map>
+#include <chrono>
 
 using namespace std;
 
@@ -13,6 +15,10 @@ using namespace std;
 // External functions
 extern DWORD WINAPI EchoHandler(void* sd_) ;
 extern void DoSomething( char *src, char *dest );
+void parseCandidates();
+
+const chrono::minutes duration(1);
+
 
 // List of Winsock error constants mapped to an interpretation string.
 // Note that this list must remain sorted by the error constants'
@@ -156,7 +162,7 @@ int main(void)
     
 	//Recuperation de l'adresse locale
 	hostent *thisHost;
-	thisHost=gethostbyname("132.207.29.126");
+	thisHost=gethostbyname("132.207.29.113");
 	char* ip;
 	ip=inet_ntoa(*(struct in_addr*) *thisHost->h_addr_list);
 	printf("Adresse locale trouvee %s : \n\n",ip);
@@ -209,6 +215,8 @@ int main(void)
            // return 1;
         }
     }
+
+
   
     // No longer need server socket
 	closesocket(ServerSocket);
