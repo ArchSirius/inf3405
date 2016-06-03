@@ -38,25 +38,32 @@ int __cdecl main(int argc, char **argv)
 
 		printf("Confirmation de votre vote...");
 
-
+		// On effectue 20 essais pour éviter de bloquer ici...
 		for (auto i = 0; i < 20; ++i)
 		{
 			std::array < char, 1 > confirmBuffer;
-			recv(leSocket, confirmBuffer.data(), confirmBuffer.size(), 0);
+			
+			auto bytesRecv = recv(leSocket, confirmBuffer.data(), confirmBuffer.size(), 0);
 
-			if (recv(leSocket, confirmBuffer.data(), confirmBuffer.size(), 0) > 0 &&
-				confirmBuffer.at(0) == '1')
+			if (bytesRecv > 0 && confirmBuffer.at(0) == '1')
 			{
 				printf("SUCCES!\n\nMerci.");
 				break;
 			}
-			
-			std::cout << ".";
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			else if (bytesRecv > 0 && confirmBuffer.at(0) == '0')
+			{
+				printf("Erreur.  Votre vote n'a pas ete enregistre.");
+			}
+			else
+			{
+				std::cout << ".";
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			}
 		}
 	}
 	
 	terminate();
+	getchar();
 
     return 0;
 }
@@ -162,8 +169,7 @@ void displayCandidates()
 
 	auto charToRecv = 0;
 
-	while (recv(leSocket, reply.data(), 1024, 0) != 0)
-	{
+	recv(leSocket, reply.data(), 1024, 0);
 		for (auto c : reply)
 		{
 			if (c == '\0')
@@ -173,7 +179,6 @@ void displayCandidates()
 
 			std::cout << c;
 		}
-	}
 }
 
 void terminate()

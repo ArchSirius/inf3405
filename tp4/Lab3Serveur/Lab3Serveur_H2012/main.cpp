@@ -3,6 +3,7 @@
 #include <winsock2.h>
 #include <iostream>
 #include <algorithm>
+#include <array>
 #include <strstream>
 #include <fstream>
 #include <map>
@@ -16,13 +17,16 @@ using namespace std;
 #pragma comment( lib, "ws2_32.lib" )
 
 // External functions
-extern DWORD WINAPI EchoHandler(void* sd_) ;
+extern DWORD WINAPI voteProcessing(void* sd_);
 string itos(int i);
 void onServerBoot();
 
+// Returns the candidate for which the client has voted for.  Returns -1 if vote is not valid.
+int processVote(const array<char, 64>& voteBuffer);
+
 // Variables
 SOCKET sd;
-const chrono::minutes DURATION(1);
+const chrono::minutes DURATION(90);
 chrono::time_point<chrono::system_clock> endTime;
 const char* logFile = "journal.txt";
 const char* candaidatesList = "Liste_des_candidats.txt";
@@ -173,7 +177,7 @@ int main(void)
     
 	//Recuperation de l'adresse locale
 	hostent *thisHost;
-	thisHost=gethostbyname("132.207.29.108");
+	thisHost=gethostbyname("127.0.0.1");
 	char* ip;
 	ip=inet_ntoa(*(struct in_addr*) *thisHost->h_addr_list);
 	printf("Adresse locale trouvee %s : \n\n",ip);
@@ -220,7 +224,7 @@ int main(void)
                     endl;
 
             DWORD nThreadID;
-            CreateThread(0, 0, EchoHandler, (void*)sd, 0, &nThreadID);
+			CreateThread(0, 0, voteProcessing, (void*)sd, 0, &nThreadID);
         }
         else {
             cerr << WSAGetLastErrorMessage("Echec d'une connection.") << 
@@ -242,10 +246,29 @@ int main(void)
 //// EchoHandler ///////////////////////////////////////////////////////
 // Handles the incoming data by reflecting it back to the sender.
 
-DWORD WINAPI EchoHandler(void* sd_) 
+DWORD WINAPI voteProcessing(void* sd_) 
 {
 	SOCKET sd = (SOCKET)sd_;
 	send(sd, strCandidates.c_str(), strCandidates.size(), 0);
+
+	// Receive vote
+	std::array<char, 64> voteBuffer;
+
+	recv(sd, voteBuffer.data(), voteBuffer.size(), 0);
+	
+	auto candidateId = processVote(voteBuffer);
+
+	if (candidateId == -1)
+	{
+		const char* failReply = "0";
+		send(sd, failReply, 1, 0);
+	}
+	else
+	{
+		const char* successReply = "1";
+		send(sd, successReply, 1, 0);
+	}
+
 	closesocket(sd);
 
 	return 0;
@@ -268,6 +291,27 @@ void onServerBoot() {
 			strCandidates += itos(nb) + " : " + candidates.at(nb) + "\n";
 		}
 	}
+}
+
+// À vérifier.......
+int processVote(const array<char, 64>& voteBuffer)
+{
+	// Trunk unecessary characters in the buffer
+	auto delimiterPos = std::find(voteBuffer.begin(), voteBuffer.end(), '\0');
+
+	// Check if vote is valid
+	if (all_of(voteBuffer.begin(), delimiterPos, [](char c){ return c>='0' && c<='9'; }))
+	{
+		std::string candidateStr = { voteBuffer.begin(), delimiterPos };
+
+		auto candidateId = stoi(candidateStr);
+		if (candidates.find(candidateId) != candidates.end())
+		{
+			return candidateId;
+		}
+	}
+
+	return -1;
 }
 
 void onPollClosed() {
@@ -295,8 +339,8 @@ bool onConnectionRequest() {
 	return false;
 }
 
-void onConnectionAccepted() {
-
+void onConnectionAccepted(void* sd_) {
+	
 }
 
 void onConnectionRefused() {
