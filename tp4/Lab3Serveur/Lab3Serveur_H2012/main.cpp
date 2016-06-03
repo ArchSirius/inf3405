@@ -8,21 +8,32 @@
 #include <fstream>
 #include <map>
 #include <chrono>
+#include <ctime>
+#include <iomanip>
 #include <string>
 #include <sstream>
+#include <memory>
 
 using namespace std;
 
 // link with Ws2_32.lib
 #pragma comment( lib, "ws2_32.lib" )
 
+typedef struct {
+	SOCKET socket;
+	string ip;
+	USHORT port;
+} socketParams;
+
 // External functions
 extern DWORD WINAPI voteProcessing(void* sd_);
 string itos(int i);
 void onServerBoot();
 
-// Returns the candidate for which the client has voted for.  Returns -1 if vote is not valid.
-int processVote(const array<char, 64>& voteBuffer);
+// Returns the candidate for which the client has voted for.  Returns false if vote is not valid.
+bool processVote(const array<char, 64>& voteBuffer);
+
+void logInfo(socketParams* params, bool valid);
 
 // Variables
 SOCKET sd;
@@ -33,6 +44,7 @@ const char* candaidatesList = "Liste_des_candidats.txt";
 map<int, string> candidates;
 map<int, int> votes;
 string strCandidates = "";
+int nbVotes;
 
 
 // List of Winsock error constants mapped to an interpretation string.
@@ -223,8 +235,9 @@ int main(void)
                     ntohs(sinRemote.sin_port) << "." <<
                     endl;
 
+			socketParams params{ sd, inet_ntoa(sinRemote.sin_addr), ntohs(sinRemote.sin_port) };
             DWORD nThreadID;
-			CreateThread(0, 0, voteProcessing, (void*)sd, 0, &nThreadID);
+			CreateThread(0, 0, voteProcessing, (void*) &params, 0, &nThreadID);
         }
         else {
             cerr << WSAGetLastErrorMessage("Echec d'une connection.") << 
@@ -248,7 +261,8 @@ int main(void)
 
 DWORD WINAPI voteProcessing(void* sd_) 
 {
-	SOCKET sd = (SOCKET)sd_;
+	auto params = reinterpret_cast<socketParams*>(sd_);
+	SOCKET sd = (SOCKET)params->socket;
 	send(sd, strCandidates.c_str(), strCandidates.size(), 0);
 
 	// Receive vote
@@ -256,18 +270,11 @@ DWORD WINAPI voteProcessing(void* sd_)
 
 	recv(sd, voteBuffer.data(), voteBuffer.size(), 0);
 	
-	auto candidateId = processVote(voteBuffer);
+	bool valid = processVote(voteBuffer);
+	logInfo(params, valid);
 
-	if (candidateId == -1)
-	{
-		const char* failReply = "0";
-		send(sd, failReply, 1, 0);
-	}
-	else
-	{
-		const char* successReply = "1";
-		send(sd, successReply, 1, 0);
-	}
+	const char* validVote = "1";
+	send(sd, validVote, 1, 0);
 
 	closesocket(sd);
 
@@ -277,6 +284,12 @@ DWORD WINAPI voteProcessing(void* sd_)
 void onServerBoot() {
 	// Read the candidates file
 	ifstream candidatesFile(candaidatesList);
+
+	// Cleanup logfile
+	ofstream file;
+	file.open(logFile, std::ofstream::out | std::ofstream::trunc);
+	file.clear();
+	file.close();
 
 	// Insert the data in map candidates
 	while (!candidatesFile.eof() && !candidatesFile.fail())
@@ -293,25 +306,36 @@ void onServerBoot() {
 	}
 }
 
-// À vérifier.......
-int processVote(const array<char, 64>& voteBuffer)
+bool processVote(const array<char, 64>& voteBuffer)
 {
 	// Trunk unecessary characters in the buffer
 	auto delimiterPos = std::find(voteBuffer.begin(), voteBuffer.end(), '\0');
 
 	// Check if vote is valid
-	if (all_of(voteBuffer.begin(), delimiterPos, [](char c){ return c>='0' && c<='9'; }))
+	bool valid = false;
+	if (all_of(voteBuffer.begin(), delimiterPos, [](char c) { return c >= '0' && c <= '9'; }))
 	{
 		std::string candidateStr = { voteBuffer.begin(), delimiterPos };
 
 		auto candidateId = stoi(candidateStr);
 		if (candidates.find(candidateId) != candidates.end())
 		{
-			return candidateId;
+			votes.at(candidateId)++;
+			valid = true;
 		}
 	}
+	nbVotes++;
+	return valid;
+}
 
-	return -1;
+void logInfo(socketParams* params, bool valid) {
+	ofstream file;
+	file.open(logFile, std::ofstream::out | std::ofstream::app);
+	string ip = params->ip;
+	string port = itos(params->port);
+	auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+	file << std::put_time(std::localtime(&now), "%F %T") << " -- " << ip << ":" << port << " -- " << (valid ? "valide" : "invalide") << endl;
+	file.close();
 }
 
 void onPollClosed() {

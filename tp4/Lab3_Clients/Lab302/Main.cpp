@@ -23,13 +23,13 @@ SOCKET leSocket;// = INVALID_SOCKET;
 
 int __cdecl main(int argc, char **argv)
 {
-	if (initialize() == 0);
+	if (initialize() == 0)
 	{
 		printf("Bienvenue au systeme electoral automatise PolyVote\n\n");
 		printf("Liste des candidats :\n");
 		displayCandidates();
 
-		printf("Veuillez entrer le numero du candidate pour lequel vous voulez voter : ");
+		printf("Veuillez entrer le numero du candidat pour lequel vous voulez voter : ");
 		
 		std::array < char, 64 > voteBuffer;
 		gets_s(voteBuffer.data(), voteBuffer.size());
@@ -39,6 +39,7 @@ int __cdecl main(int argc, char **argv)
 		printf("Confirmation de votre vote...");
 
 		// On effectue 20 essais pour éviter de bloquer ici...
+		bool success = false;
 		for (auto i = 0; i < 20; ++i)
 		{
 			std::array < char, 1 > confirmBuffer;
@@ -47,18 +48,18 @@ int __cdecl main(int argc, char **argv)
 
 			if (bytesRecv > 0 && confirmBuffer.at(0) == '1')
 			{
+				success = true;
 				printf("SUCCES!\n\nMerci.");
 				break;
-			}
-			else if (bytesRecv > 0 && confirmBuffer.at(0) == '0')
-			{
-				printf("Erreur.  Votre vote n'a pas ete enregistre.");
 			}
 			else
 			{
 				std::cout << ".";
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			}
+		}
+		if (!success) {
+			printf("Erreur!\n\nContactez un polytechnicien. Merci.");
 		}
 	}
 	
