@@ -13,6 +13,8 @@
 #include <string>
 #include <sstream>
 #include <memory>
+#include <atomic>
+#include <vector>
 
 using namespace std;
 
@@ -29,6 +31,8 @@ typedef struct {
 extern DWORD WINAPI voteProcessing(void* sd_);
 string itos(int i);
 void onServerBoot();
+void onPollOver();
+bool onConnectionRequest();
 
 // Returns the candidate for which the client has voted for.  Returns false if vote is not valid.
 bool processVote(const array<char, 64>& voteBuffer);
@@ -36,8 +40,9 @@ bool processVote(const array<char, 64>& voteBuffer);
 void logInfo(socketParams* params, bool valid);
 
 // Variables
+atomic<int> nbSockets;
 SOCKET sd;
-const chrono::minutes DURATION(90);
+const chrono::milliseconds DURATION(1000);
 chrono::time_point<chrono::system_clock> endTime;
 const char* logFile = "journal.txt";
 const char* candaidatesList = "Liste_des_candidats.txt";
@@ -222,14 +227,17 @@ int main(void)
 
 	onServerBoot();
 
-    while (true) {	
+    while (endTime.time_since_epoch().count() == 0 || chrono::system_clock::now().time_since_epoch().count() < endTime.time_since_epoch().count()) {
+		printf("now: %i\n", chrono::system_clock::now().time_since_epoch().count());
+		printf("end: %i\n\n", endTime.time_since_epoch().count());
 
 		sockaddr_in sinRemote;
 		int nAddrSize = sizeof(sinRemote);
 		// Create a SOCKET for accepting incoming requests.
 		// Accept the connection.
 		SOCKET sd = accept(ServerSocket, (sockaddr*)&sinRemote, &nAddrSize);
-        if (sd != INVALID_SOCKET) {
+        if (sd != INVALID_SOCKET && onConnectionRequest()) {
+			++nbSockets;
 			cout << "Connection acceptee De : " <<
                     inet_ntoa(sinRemote.sin_addr) << ":" <<
                     ntohs(sinRemote.sin_port) << "." <<
@@ -245,8 +253,13 @@ int main(void)
            // return 1;
         }
     }
+	// Polling is now closed
+	// Waiting for remaining voters
+	while (nbSockets > 0) {
+		printf("OK");
+	}
 
-
+	onPollOver();
   
     // No longer need server socket
 	closesocket(ServerSocket);
@@ -277,11 +290,15 @@ DWORD WINAPI voteProcessing(void* sd_)
 	send(sd, validVote, 1, 0);
 
 	closesocket(sd);
+	--nbSockets;
 
 	return 0;
 }
 
 void onServerBoot() {
+	// init counter
+	nbSockets = 0;
+
 	// Read the candidates file
 	ifstream candidatesFile(candaidatesList);
 
@@ -320,11 +337,11 @@ bool processVote(const array<char, 64>& voteBuffer)
 		auto candidateId = stoi(candidateStr);
 		if (candidates.find(candidateId) != candidates.end())
 		{
-			votes.at(candidateId)++;
+			++votes.at(candidateId);
 			valid = true;
 		}
 	}
-	nbVotes++;
+	++nbVotes;
 	return valid;
 }
 
@@ -338,17 +355,21 @@ void logInfo(socketParams* params, bool valid) {
 	file.close();
 }
 
-void onPollClosed() {
-	// If no connections, onPollOver
-	// If connections, wait
-}
-
 void onPollOver() {
-	
-}
-
-void onServerShutdown() {
-
+	printf("*** VOTES TERMINES ***\n");
+	vector<pair<string, int>> results;
+	for (auto i : candidates) {
+		results.emplace_back(i.second, votes.at(i.first));
+	}
+	sort(results.begin(), results.end(), [](pair<string, int> p1, pair<string, int> p2) {return p1.second < p2.second;});
+	int nbValidVotes = 0;
+	for (auto r : results) {
+		nbValidVotes += r.second;
+		printf("%s \t: %i (%f\%)\n", r.first, r.second, 1.0 * r.second / nbVotes);
+	}
+	int nbInvalidVotes = nbVotes - nbValidVotes;
+	printf("Votes invalides \t: %i (%f\%)\n", nbInvalidVotes, 1.0 * nbInvalidVotes / nbVotes);
+	printf("\nNombre total d'electeurs : %i", nbVotes);
 }
 
 bool onConnectionRequest() {
@@ -361,25 +382,6 @@ bool onConnectionRequest() {
 		return true;
 	}
 	return false;
-}
-
-void onConnectionAccepted(void* sd_) {
-	
-}
-
-void onConnectionRefused() {
-	// Send error message
-}
-
-void onVote() {
-	// Get elector info
-	// Add vote to votes map
-	// Add info to log
-	// Disconnect elector
-}
-
-void onDisconnect() {
-	// Send message
 }
 
 string itos(int i) {
