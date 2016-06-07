@@ -23,18 +23,18 @@ using namespace std;
 // Socket params
 typedef struct {
 	SOCKET socket;
-	char* ip;
+	string ip;
 	USHORT port;
 } socketParams;
 
 // External functions
-void				onServerBoot();
-bool				onConnectionRequest();
-extern DWORD WINAPI voteProcessing(void* sd_);
-bool				processVote(const array<char, 64>& voteBuffer);
-void				logInfo(socketParams* params, bool valid);
-void				onPollOver();
-string				itos(int i);
+void					onServerBoot();
+bool					onConnectionRequest();
+extern DWORD WINAPI		voteProcessing(void* sd_);
+bool					processVote(const array<char, 64>& voteBuffer);
+void					logInfo(socketParams* params, bool valid);
+void					onPollOver();
+string					itos(int i);
 
 // Constants
 const char*					LOGFILE = "journal.txt";
@@ -50,6 +50,7 @@ map<int, string>							candidates;
 map<int, int>								votes;
 int											nbVotes;
 chrono::time_point<chrono::system_clock>	endTime;
+ofstream									file;
 
 
 // List of Winsock error constants mapped to an interpretation string.
@@ -245,9 +246,9 @@ int main(void)
 					ntohs(sinRemote.sin_port) << "." <<
 					endl;
 
-				socketParams params{ sd, inet_ntoa(sinRemote.sin_addr), ntohs(sinRemote.sin_port) };
+				auto params = new socketParams{ sd, inet_ntoa(sinRemote.sin_addr), ntohs(sinRemote.sin_port) };
 				DWORD nThreadID;
-				CreateThread(0, 0, voteProcessing, (void*)&params, 0, &nThreadID);
+				CreateThread(0, 0, voteProcessing, (void*)params, 0, &nThreadID);
 			}
 			else {
 				cerr << WSAGetLastErrorMessage("Echec d'une connection.") <<
@@ -293,6 +294,8 @@ DWORD WINAPI voteProcessing(void* sd_)
 
 	closesocket(sd);
 	--nbSockets;
+	delete sd_;
+	sd_ = nullptr;
 
 	return 0;
 }
@@ -306,11 +309,11 @@ void onServerBoot() {
 	// Read the candidates file
 	ifstream candidatesFile(CANDIDATES_LIST);
 
-	// Cleanup logfile
-	ofstream file;
+	// Prepare logfile
 	file.open(LOGFILE, std::ofstream::out | std::ofstream::trunc);
 	file.clear();
 	file.close();
+	file.open(LOGFILE, std::ofstream::out | std::ofstream::app);
 
 	// Insert the data in map candidates
 	while (!candidatesFile.eof() && !candidatesFile.fail()) {
@@ -351,8 +354,6 @@ bool processVote(const array<char, 64>& voteBuffer) {
 //// logInfo ///////////////////////////////////////////////////////
 // Logs the voters infos in the log file
 void logInfo(socketParams* params, bool valid) {
-	ofstream file;
-	file.open(LOGFILE, std::ofstream::out | std::ofstream::app);
 	string ip = params->ip;
 	string port = itos(params->port);
 	time_t now = chrono::system_clock::to_time_t(chrono::system_clock::now());
@@ -360,12 +361,16 @@ void logInfo(socketParams* params, bool valid) {
 	now_s.resize(now_s.size() - 1);
 
 	file << now_s << " -- " << ip << ":" << port << " -- " << (valid ? "valide" : "invalide") << endl;
-	file.close();
 }
 
 //// onPollOver ///////////////////////////////////////////////////////
 // Handles what to do after the voting process is complete
 void onPollOver() {
+	// Close journal
+	if (file.is_open()) {
+		file.close();
+	}
+
 	cout << "*** VOTES TERMINES ***" << endl;
 
 	// Create the sortable vector
