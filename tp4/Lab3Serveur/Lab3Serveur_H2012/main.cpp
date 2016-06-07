@@ -40,7 +40,7 @@ string				itos(int i);
 const char*					LOGFILE = "journal.txt";
 const char*					CANDIDATES_LIST = "Liste_des_candidats.txt";
 const timeval				SELECT_TIMEOUT{0, 10000};
-const chrono::milliseconds	DURATION(1000);
+const chrono::minutes		DURATION(1);
 
 // Variables
 SOCKET										sd;
