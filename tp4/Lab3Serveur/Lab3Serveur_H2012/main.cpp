@@ -1,55 +1,55 @@
 #undef UNICODE
 
-#include <winsock2.h>
-#include <iostream>
-#include <algorithm>
 #include <array>
-#include <strstream>
-#include <fstream>
-#include <map>
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <ctime>
+#include <fstream>
 #include <iomanip>
-#include <string>
+#include <iostream>
+#include <map>
 #include <sstream>
-#include <memory>
-#include <atomic>
+#include <string>
+#include <strstream>
 #include <vector>
+#include <winsock2.h>
 
 using namespace std;
 
 // link with Ws2_32.lib
 #pragma comment( lib, "ws2_32.lib" )
 
+// Socket params
 typedef struct {
 	SOCKET socket;
-	string ip;
+	char* ip;
 	USHORT port;
 } socketParams;
 
 // External functions
+void				onServerBoot();
+bool				onConnectionRequest();
 extern DWORD WINAPI voteProcessing(void* sd_);
-string itos(int i);
-void onServerBoot();
-void onPollOver();
-bool onConnectionRequest();
+bool				processVote(const array<char, 64>& voteBuffer);
+void				logInfo(socketParams* params, bool valid);
+void				onPollOver();
+string				itos(int i);
 
-// Returns the candidate for which the client has voted for.  Returns false if vote is not valid.
-bool processVote(const array<char, 64>& voteBuffer);
-
-void logInfo(socketParams* params, bool valid);
+// Constants
+const char*					LOGFILE = "journal.txt";
+const char*					CANDIDATES_LIST = "Liste_des_candidats.txt";
+const timeval				SELECT_TIMEOUT{0, 10000};
+const chrono::milliseconds	DURATION(1000);
 
 // Variables
-atomic<int> nbSockets;
-SOCKET sd;
-const chrono::milliseconds DURATION(1000);
-chrono::time_point<chrono::system_clock> endTime;
-const char* logFile = "journal.txt";
-const char* candaidatesList = "Liste_des_candidats.txt";
-map<int, string> candidates;
-map<int, int> votes;
-string strCandidates = "";
-int nbVotes;
+SOCKET										sd;
+atomic<int>									nbSockets;
+string										strCandidates = "";
+map<int, string>							candidates;
+map<int, int>								votes;
+int											nbVotes;
+chrono::time_point<chrono::system_clock>	endTime;
 
 
 // List of Winsock error constants mapped to an interpretation string.
@@ -194,14 +194,12 @@ int main(void)
     
 	//Recuperation de l'adresse locale
 	hostent *thisHost;
-	thisHost=gethostbyname("127.0.0.1");
+	thisHost=gethostbyname("132.207.29.108");
 	char* ip;
 	ip=inet_ntoa(*(struct in_addr*) *thisHost->h_addr_list);
 	printf("Adresse locale trouvee %s : \n\n",ip);
 	sockaddr_in service;
     service.sin_family = AF_INET;
-    //service.sin_addr.s_addr = inet_addr("127.0.0.1");
-	//	service.sin_addr.s_addr = INADDR_ANY;
 	service.sin_addr.s_addr = inet_addr(ip);
     service.sin_port = htons(port);
 
@@ -227,37 +225,40 @@ int main(void)
 
 	onServerBoot();
 
+	// Loop while polling is open
     while (endTime.time_since_epoch().count() == 0 || chrono::system_clock::now().time_since_epoch().count() < endTime.time_since_epoch().count()) {
-		printf("now: %i\n", chrono::system_clock::now().time_since_epoch().count());
-		printf("end: %i\n\n", endTime.time_since_epoch().count());
-
 		sockaddr_in sinRemote;
 		int nAddrSize = sizeof(sinRemote);
-		// Create a SOCKET for accepting incoming requests.
-		// Accept the connection.
-		SOCKET sd = accept(ServerSocket, (sockaddr*)&sinRemote, &nAddrSize);
-        if (sd != INVALID_SOCKET && onConnectionRequest()) {
-			++nbSockets;
-			cout << "Connection acceptee De : " <<
-                    inet_ntoa(sinRemote.sin_addr) << ":" <<
-                    ntohs(sinRemote.sin_port) << "." <<
-                    endl;
 
-			socketParams params{ sd, inet_ntoa(sinRemote.sin_addr), ntohs(sinRemote.sin_port) };
-            DWORD nThreadID;
-			CreateThread(0, 0, voteProcessing, (void*) &params, 0, &nThreadID);
-        }
-        else {
-            cerr << WSAGetLastErrorMessage("Echec d'une connection.") << 
-                    endl;
-           // return 1;
-        }
+		fd_set readSet;	// source : http://www.gamedev.net/topic/590497-winsock-c-accept-non-blocking/
+		FD_ZERO(&readSet);
+		FD_SET(ServerSocket, &readSet);
+
+		// Wait for connections, non-blocking
+		if (select(ServerSocket, &readSet, NULL, NULL, &SELECT_TIMEOUT) > 0) {	// source : https://msdn.microsoft.com/en-us/library/windows/desktop/ms740141%28v=vs.85%29.aspx
+			// Accept the connection.
+			SOCKET sd = accept(ServerSocket, (sockaddr*)&sinRemote, &nAddrSize);
+			if (sd != INVALID_SOCKET && onConnectionRequest()) {
+				++nbSockets;
+				cout << "Connection acceptee De : " <<
+					inet_ntoa(sinRemote.sin_addr) << ":" <<
+					ntohs(sinRemote.sin_port) << "." <<
+					endl;
+
+				socketParams params{ sd, inet_ntoa(sinRemote.sin_addr), ntohs(sinRemote.sin_port) };
+				DWORD nThreadID;
+				CreateThread(0, 0, voteProcessing, (void*)&params, 0, &nThreadID);
+			}
+			else {
+				cerr << WSAGetLastErrorMessage("Echec d'une connection.") <<
+					endl;
+			}
+		}
     }
+
 	// Polling is now closed
 	// Waiting for remaining voters
-	while (nbSockets > 0) {
-		printf("OK");
-	}
+	while (nbSockets > 0) {}
 
 	onPollOver();
   
@@ -269,8 +270,8 @@ int main(void)
 }
 
 
-//// EchoHandler ///////////////////////////////////////////////////////
-// Handles the incoming data by reflecting it back to the sender.
+//// voteProcessing ///////////////////////////////////////////////////////
+// Processes the voters connection and information
 
 DWORD WINAPI voteProcessing(void* sd_) 
 {
@@ -279,13 +280,14 @@ DWORD WINAPI voteProcessing(void* sd_)
 	send(sd, strCandidates.c_str(), strCandidates.size(), 0);
 
 	// Receive vote
-	std::array<char, 64> voteBuffer;
+	array<char, 64> voteBuffer;
 
 	recv(sd, voteBuffer.data(), voteBuffer.size(), 0);
 	
 	bool valid = processVote(voteBuffer);
 	logInfo(params, valid);
 
+	// Send reception confirmation
 	const char* validVote = "1";
 	send(sd, validVote, 1, 0);
 
@@ -295,22 +297,23 @@ DWORD WINAPI voteProcessing(void* sd_)
 	return 0;
 }
 
+//// onServerBoot ///////////////////////////////////////////////////////
+// Initializes server variables on boot
 void onServerBoot() {
-	// init counter
+	// Init counter
 	nbSockets = 0;
 
 	// Read the candidates file
-	ifstream candidatesFile(candaidatesList);
+	ifstream candidatesFile(CANDIDATES_LIST);
 
 	// Cleanup logfile
 	ofstream file;
-	file.open(logFile, std::ofstream::out | std::ofstream::trunc);
+	file.open(LOGFILE, std::ofstream::out | std::ofstream::trunc);
 	file.clear();
 	file.close();
 
 	// Insert the data in map candidates
-	while (!candidatesFile.eof() && !candidatesFile.fail())
-	{
+	while (!candidatesFile.eof() && !candidatesFile.fail()) {
 		string candidate;
 		getline(candidatesFile, candidate, ';');
 		candidate.erase(std::remove(candidate.begin(), candidate.end(), '\n'), candidate.end());
@@ -323,20 +326,20 @@ void onServerBoot() {
 	}
 }
 
-bool processVote(const array<char, 64>& voteBuffer)
-{
+//// processVote ///////////////////////////////////////////////////////
+// Computes a vote
+bool processVote(const array<char, 64>& voteBuffer) {
 	// Trunk unecessary characters in the buffer
 	auto delimiterPos = std::find(voteBuffer.begin(), voteBuffer.end(), '\0');
 
 	// Check if vote is valid
 	bool valid = false;
-	if (all_of(voteBuffer.begin(), delimiterPos, [](char c) { return c >= '0' && c <= '9'; }))
-	{
+	if (all_of(voteBuffer.begin(), delimiterPos, [](char c) { return c >= '0' && c <= '9'; })) {
 		std::string candidateStr = { voteBuffer.begin(), delimiterPos };
 
+		// Add vote to candidate
 		auto candidateId = stoi(candidateStr);
-		if (candidates.find(candidateId) != candidates.end())
-		{
+		if (candidates.find(candidateId) != candidates.end()) {
 			++votes.at(candidateId);
 			valid = true;
 		}
@@ -345,38 +348,54 @@ bool processVote(const array<char, 64>& voteBuffer)
 	return valid;
 }
 
+//// logInfo ///////////////////////////////////////////////////////
+// Logs the voters infos in the log file
 void logInfo(socketParams* params, bool valid) {
 	ofstream file;
-	file.open(logFile, std::ofstream::out | std::ofstream::app);
+	file.open(LOGFILE, std::ofstream::out | std::ofstream::app);
 	string ip = params->ip;
 	string port = itos(params->port);
-	auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-	file << std::put_time(std::localtime(&now), "%F %T") << " -- " << ip << ":" << port << " -- " << (valid ? "valide" : "invalide") << endl;
+	time_t now = chrono::system_clock::to_time_t(chrono::system_clock::now());
+	string now_s = ctime(&now);
+	now_s.resize(now_s.size() - 1);
+
+	file << now_s << " -- " << ip << ":" << port << " -- " << (valid ? "valide" : "invalide") << endl;
 	file.close();
 }
 
+//// onPollOver ///////////////////////////////////////////////////////
+// Handles what to do after the voting process is complete
 void onPollOver() {
-	printf("*** VOTES TERMINES ***\n");
+	cout << "*** VOTES TERMINES ***" << endl;
+
+	// Create the sortable vector
 	vector<pair<string, int>> results;
 	for (auto i : candidates) {
 		results.emplace_back(i.second, votes.at(i.first));
 	}
-	sort(results.begin(), results.end(), [](pair<string, int> p1, pair<string, int> p2) {return p1.second < p2.second;});
+
+	// Sort candidates by votes
+	sort(results.begin(), results.end(), [](pair<string, int> p1, pair<string, int> p2) {return p1.second > p2.second;});
+
+	// Print the results
 	int nbValidVotes = 0;
 	for (auto r : results) {
 		nbValidVotes += r.second;
-		printf("%s \t: %i (%f\%)\n", r.first, r.second, 1.0 * r.second / nbVotes);
+		cout << r.first << "\t: " << r.second << " (" << 100.0 * r.second / nbVotes << "%)" << endl;
 	}
 	int nbInvalidVotes = nbVotes - nbValidVotes;
-	printf("Votes invalides \t: %i (%f\%)\n", nbInvalidVotes, 1.0 * nbInvalidVotes / nbVotes);
-	printf("\nNombre total d'electeurs : %i", nbVotes);
+	cout << "Votes invalides \t: " << nbInvalidVotes << " (" << 100.0 * nbInvalidVotes / nbVotes << "%)" << endl;
+	cout << endl << "Nombre total d'electeurs : " << nbVotes << endl;
 }
 
+//// onConnectionRequest ///////////////////////////////////////////////////////
+// Checks if a connection can be accepted or not (returns true if accepted; false otherwise)
 bool onConnectionRequest() {
 	// Initialize countdown if not initialized
 	if (endTime.time_since_epoch().count() == 0) {
 		endTime = chrono::system_clock::now() + DURATION;
 	}
+
 	// Accept connection if poll is open
 	if (chrono::system_clock::now().time_since_epoch().count() < endTime.time_since_epoch().count()) {
 		return true;
@@ -384,6 +403,8 @@ bool onConnectionRequest() {
 	return false;
 }
 
+//// itos ///////////////////////////////////////////////////////
+// Converts an integer to string format
 string itos(int i) {
 	stringstream ss;
 	ss << i;
@@ -391,5 +412,3 @@ string itos(int i) {
 	ss >> s;
 	return s;
 }
-
-// onConnectionRequest() ? onConnectionAccepted() : onConnectionRefused();

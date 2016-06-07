@@ -1,21 +1,21 @@
 #undef UNICODE
 
-#include <array>
 #include <algorithm>
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include <array>
 #include <chrono>
 #include <iostream>
-#include <string>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string>
 #include <thread>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 
 // Link avec ws2_32.lib
 #pragma comment(lib, "ws2_32.lib")
 
-int initialize();
 void displayCandidates();
+int  initialize();
 void terminate();
 
 SOCKET leSocket;// = INVALID_SOCKET;
@@ -69,8 +69,9 @@ int __cdecl main(int argc, char **argv)
     return 0;
 }
 
-int initialize()
-{
+//// initialize ///////////////////////////////////////////////////////
+// Initializes the program
+int initialize() {
 	WSADATA wsaData;
 	
 	struct addrinfo *result = NULL,
@@ -85,6 +86,7 @@ int initialize()
 		printf("Erreur de WSAStartup: %d\n", iResult);
 		return 1;
 	}
+
 	// On va creer le socket pour communiquer avec le serveur
 	leSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (leSocket == INVALID_SOCKET) {
@@ -95,6 +97,7 @@ int initialize()
 		getchar();
 		return 1;
 	}
+
 	//--------------------------------------------
 	// On va chercher l'adresse du serveur en utilisant la fonction getaddrinfo.
 	ZeroMemory(&hints, sizeof(hints));
@@ -103,9 +106,6 @@ int initialize()
 	hints.ai_protocol = IPPROTO_TCP;  // Protocole utilisé par le serveur
 
 	// On indique le nom et le port du serveur auquel on veut se connecter
-	//char *host = "L4708-XX";
-	//char *host = "L4708-XX.lerb.polymtl.ca";
-	//char *host = "add_IP locale";
 	char host[256];
 	char port[256];
 
@@ -122,12 +122,11 @@ int initialize()
 		WSACleanup();
 		return 1;
 	}
+
 	//---------------------------------------------------------------------		
 	//On parcours les adresses retournees jusqu'a trouver la premiere adresse IPV4
 	while ((result != NULL) && (result->ai_family != AF_INET))
 		result = result->ai_next;
-
-	//	if ((result != NULL) &&(result->ai_family==AF_INET)) result = result->ai_next;  
 
 	//-----------------------------------------
 	if (((result == NULL) || (result->ai_family != AF_INET))) {
@@ -141,6 +140,7 @@ int initialize()
 
 	sockaddr_in *adresse;
 	adresse = (struct sockaddr_in *) result->ai_addr;
+
 	//----------------------------------------------------
 	printf("Adresse trouvee pour le serveur %s : %s\n\n", host, inet_ntoa(adresse->sin_addr));
 	printf("Tentative de connexion au serveur %s avec le port %s\n\n", inet_ntoa(adresse->sin_addr), port);
@@ -163,28 +163,27 @@ int initialize()
 	return 0;
 }
 
-void displayCandidates()
-{
+//// displayCandidates ///////////////////////////////////////////////////////
+// Prints to user the list of candidates received from the server
+void displayCandidates() {
 	std::array<char, 1024> reply;
 	reply.fill('\0');
 
 	auto charToRecv = 0;
 
 	recv(leSocket, reply.data(), 1024, 0);
-		for (auto c : reply)
-		{
-			if (c == '\0')
-			{
-				break;
-			}
-
-			std::cout << c;
+	for (auto c : reply) {
+		if (c == '\0') {
+			break;
 		}
+
+		std::cout << c;
+	}
 }
 
-void terminate()
-{
-	// cleanup
+//// terminate ///////////////////////////////////////////////////////
+// Cleans the sockets
+void terminate() {
 	closesocket(leSocket);
 	WSACleanup();
 }
